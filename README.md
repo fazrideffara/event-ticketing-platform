@@ -88,9 +88,9 @@ event-ticketing-platform/
         ├── config/                              # KafkaConsumerConfig, SwaggerConfig, RedisConfig
         ├── consumer/                            # OrderPaidKafkaConsumer
         ├── controller/                          # ETicketController
-        ├── entity/                              # ETicket (Document/Entity)
+        ├── entity/                              # ETicket (Document/Entity dengan QR Base64)
         ├── repository/impl/                     # ETicketRepository (Redis Data Grid)
-        └── service/impl/                        # ETicketService (QR Hashing, Email Simulator)
+        └── service/impl/                        # ETicketService, QRCodeService (ZXing), EmailService (HTML Gate Pass + QR Attachment)
 ```
 
 ---
@@ -203,10 +203,22 @@ curl -X POST http://localhost:8081/api/v1/payments \
 
 ---
 
-### Langkah 5: Cek Penerbitan E-Ticket di Service 2
+### Langkah 5: Cek Penerbitan E-Ticket & Pengiriman Email di Service 2
+1. **Inquiry Data E-Ticket (JSON & QR Code Base64):**
 ```bash
 curl -X GET http://localhost:8082/api/v1/etickets/order/<ORDER_NUMBER>
 ```
+
+2. **Render Tampilan HTML E-Ticket & QR Code Gate Pass (Buka di Browser):**
+```text
+http://localhost:8082/api/v1/etickets/render/<TICKET_CODE>
+```
+
+3. **Verifikasi Check-in di Pintu Masuk Konser (Gate Scanner):**
+```bash
+curl -X POST http://localhost:8082/api/v1/etickets/verify/<TICKET_CODE>
+```
+*Catatan: Saat OrderPaidEvent diterima dari Kafka, `eticket-notification-service` secara otomatis mengirimkan email konfirmasi berformat HTML responsif lengkap dengan QR code dan lampiran file PNG QR code.*
 
 ---
 

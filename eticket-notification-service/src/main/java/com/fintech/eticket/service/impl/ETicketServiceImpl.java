@@ -1,10 +1,13 @@
 package com.fintech.eticket.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fintech.eticket.common.constant.AppConstant;
 import com.fintech.eticket.entity.ETicket;
 import com.fintech.eticket.event.OrderPaidEvent;
 import com.fintech.eticket.repository.ETicketRepository;
+import com.fintech.eticket.service.EmailService;
 import com.fintech.eticket.service.ETicketService;
+import com.fintech.eticket.service.QRCodeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -15,6 +18,8 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -23,6 +28,9 @@ import java.util.UUID;
 public class ETicketServiceImpl implements ETicketService {
 
     private final ETicketRepository ticketRepository;
+    private final QRCodeService qrCodeService;
+    private final EmailService emailService;
+    private final ObjectMapper objectMapper;
 
     @Override
     public ETicket issueTicketFromEvent(OrderPaidEvent event) {
@@ -30,6 +38,12 @@ public class ETicketServiceImpl implements ETicketService {
 
         String ticketCode = generateTicketCode();
         String qrHash = generateQrHash(ticketCode, event.getOrderNumber(), event.getBuyerEmail());
+
+        // Construct structured QR payload
+        String qrPayload = buildQrPayload(ticketCode, event, qrHash);
+
+        // Generate QR code image in Base64 format
+        String qrCodeBase64 = qrCodeService.generateQRCodeBase64(qrPayload, 300, 300);
 
         ETicket ticket = ETicket.builder()
                 .ticketCode(ticketCode)
@@ -41,16 +55,18 @@ public class ETicketServiceImpl implements ETicketService {
                 .buyerName(event.getBuyerFullName())
                 .buyerEmail(event.getBuyerEmail())
                 .qrVerificationHash(qrHash)
+                .qrPayload(qrPayload)
+                .qrCodeBase64(qrCodeBase64)
                 .status(AppConstant.STATUS_ISSUED)
                 .issuedAt(LocalDateTime.now())
                 .build();
 
         ETicket savedTicket = ticketRepository.save(ticket);
 
-        // Simulate sending email notification
-        dispatchEmailNotification(savedTicket);
+        // Dispatch email notification with embedded QR code and ticket details
+        emailService.sendETicketEmail(savedTicket);
 
-        log.info("E-Ticket successfully issued: code={}, orderNumber={}, buyer={}",
+        log.info("E-Ticket successfully issued and stored: code={}, orderNumber={}, buyer={}",
                 savedTicket.getTicketCode(), savedTicket.getOrderNumber(), savedTicket.getBuyerEmail());
 
         return savedTicket;
@@ -63,9 +79,14 @@ public class ETicketServiceImpl implements ETicketService {
     }
 
     @Override
+    public ETicket getTicketByCode(String ticketCode) {
+        return ticketRepository.findByTicketCode(ticketCode)
+                .orElseThrow(() -> new RuntimeException("E-Ticket not found for code: " + ticketCode));
+    }
+
+    @Override
     public ETicket verifyTicketAtGate(String ticketCode) {
-        ETicket ticket = ticketRepository.findByTicketCode(ticketCode)
-                .orElseThrow(() -> new RuntimeException("Invalid ticket code: " + ticketCode));
+        ETicket ticket = getTicketByCode(ticketCode);
 
         if (AppConstant.STATUS_VERIFIED.equals(ticket.getStatus())) {
             throw new RuntimeException("Ticket has already been verified and checked-in at: " + ticket.getVerifiedAt());
@@ -78,15 +99,29 @@ public class ETicketServiceImpl implements ETicketService {
         return ticketRepository.save(ticket);
     }
 
-    private void dispatchEmailNotification(ETicket ticket) {
-        log.info("=========================================================================");
-        log.info(">>> SIMULATING EMAIL DISPATCH <<<");
-        log.info("To: {} ({})", ticket.getBuyerEmail(), ticket.getBuyerName());
-        log.info("Subject: [CONFIRMATION] Your E-Ticket for {}", ticket.getEventName());
-        log.info("E-Ticket Code: {}", ticket.getTicketCode());
-        log.info("Tier: {} | Quantity: {} ticket(s)", ticket.getTierName(), ticket.getQuantity());
-        log.info("QR Code Verification Hash: {}", ticket.getQrVerificationHash());
-        log.info("=========================================================================");
+    @Override
+    public String renderTicketHtml(String ticketCode) {
+        ETicket ticket = getTicketByCode(ticketCode);
+        return emailService.renderETicketHtml(ticket);
+    }
+
+    private String buildQrPayload(String ticketCode, OrderPaidEvent event, String qrHash) {
+        try {
+            Map<String, Object> payloadMap = new LinkedHashMap<>();
+            payloadMap.put("ticketCode", ticketCode);
+            payloadMap.put("orderNumber", event.getOrderNumber());
+            payloadMap.put("eventName", event.getEventName());
+            payloadMap.put("tierName", event.getTierName());
+            payloadMap.put("quantity", event.getQuantity());
+            payloadMap.put("buyerName", event.getBuyerFullName());
+            payloadMap.put("buyerEmail", event.getBuyerEmail());
+            payloadMap.put("hash", qrHash);
+            payloadMap.put("verificationUrl", "http://localhost:8082/api/v1/etickets/verify/" + ticketCode);
+            return objectMapper.writeValueAsString(payloadMap);
+        } catch (Exception e) {
+            log.warn("Failed to serialize QR payload to JSON, falling back to raw format", e);
+            return "TICKET:" + ticketCode + "|ORDER:" + event.getOrderNumber() + "|HASH:" + qrHash;
+        }
     }
 
     private String generateTicketCode() {

@@ -23,6 +23,8 @@ public class ETicket implements Serializable {
     private String buyerName;
     private String buyerEmail;
     private String qrVerificationHash;
+    private String qrCodeBase64;
+    private String qrPayload;
     private String status; // ISSUED, VERIFIED
     private LocalDateTime issuedAt;
     private LocalDateTime verifiedAt;

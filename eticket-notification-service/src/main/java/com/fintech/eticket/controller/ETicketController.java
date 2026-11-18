@@ -26,6 +26,20 @@ public class ETicketController {
         return ResponseEntity.ok(ApiResponse.ok(AppConstant.MSG_TICKET_FOUND, ticket));
     }
 
+    @GetMapping(ApiUrlConstant.ETICKETS_CODE)
+    @Operation(summary = "Get E-Ticket by ticket code", description = "Retrieves issued e-ticket details and QR Base64 image by Ticket Code")
+    public ResponseEntity<ApiResponse<ETicket>> getTicketByCode(@PathVariable String ticketCode) {
+        ETicket ticket = eTicketService.getTicketByCode(ticketCode);
+        return ResponseEntity.ok(ApiResponse.ok(AppConstant.MSG_TICKET_FOUND, ticket));
+    }
+
+    @GetMapping(value = ApiUrlConstant.ETICKETS_RENDER, produces = org.springframework.http.MediaType.TEXT_HTML_VALUE)
+    @Operation(summary = "Render E-Ticket HTML Pass", description = "Renders official responsive HTML gate pass with QR code")
+    public ResponseEntity<String> renderTicket(@PathVariable String ticketCode) {
+        String html = eTicketService.renderTicketHtml(ticketCode);
+        return ResponseEntity.ok(html);
+    }
+
     @PostMapping(ApiUrlConstant.ETICKETS_VERIFY)
     @Operation(summary = "Verify and check-in E-Ticket at entrance gate", description = "Validates e-ticket authenticity and marks it as checked-in")
     public ResponseEntity<ApiResponse<ETicket>> verifyTicket(@PathVariable String ticketCode) {
