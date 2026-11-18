@@ -1,26 +1,29 @@
-# Event Ticketing, Booking, Payment & E-Ticket Issuance Platform
+# Event Ticketing, Booking, Payment & E-Ticket Platform
 
 [![Java Version](https://img.shields.io/badge/Java-21%20LTS-blue.svg)](https://openjdk.org/projects/jdk/21/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.5-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-KRaft-red.svg)](https://kafka.apache.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7%20In--Memory-dc382d.svg)](https://redis.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Event--Driven%20Microservices-orange.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)]()
 
-Platform mikroservis modern berkinerja tinggi untuk pemesanan tiket konser/event berskala besar (*high-concurrency ticket war*), pemrosesan pembayaran terproteksi idempotensi, dan penerbitan tiket elektronik (E-Ticket) asinkron berbasis Apache Kafka.
+A high-performance, distributed event ticketing platform engineered for high-concurrency ticket reservations, ACID-compliant payment processing with distributed idempotency protection, and asynchronous e-ticket fulfillment powered by Apache Kafka, dynamic QR code generation, and automated HTML email notifications.
 
 ---
 
-## 1. Arsitektur Sistem & Alur Bisnis
+## 1. System Architecture
 
-Sistem ini dirancang menggunakan arsitektur **Event-Driven Microservices** yang terbagi menjadi 2 modul layanan independen:
+The platform is designed around an **Event-Driven Microservices Architecture**, separating real-time financial checkout from asynchronous document generation and notification dispatch:
 
 ```mermaid
 flowchart TD
-    Client(["Client / Mobile / Swagger UI"]) -->|1. Auth & Book| OrderService["ticket-order-service (Port 8081)"]
+    Client(["Client / Mobile / Swagger UI"]) -->|1. Authenticate & Book| OrderService["ticket-order-service (Port 8081)"]
     Client -->|2. Pay with X-Idempotency-Key| OrderService
 
     subgraph "Storage & Caching Layer"
-        PostgreSQL[("PostgreSQL 16\n- Pessimistic Lock\n- Window Functions\n- CTE Reports")]
-        Redis[("Redis 7 Data Grid\n- Idempotency SETNX\n- Quota & Event Cache")]
+        PostgreSQL[("PostgreSQL 16\n- Pessimistic Row Locking\n- Window Functions\n- CTE Aggregations")]
+        Redis[("Redis 7 Data Grid\n- Idempotency SETNX Lock\n- Catalog & Quota Cache")]
     end
 
     OrderService <-->|ACID Concurrency & Native SQL| PostgreSQL
@@ -32,101 +35,102 @@ flowchart TD
         ETicketService["eticket-notification-service (Port 8082)"]
     end
 
-    Kafka -->|4. Consume Event| ETicketService
-    ETicketService -->|5. Issue QR Code Hash| RedisStore[("Redis Non-Relational Store\nE-Ticket Document")]
-    ETicketService -->|6. Simulated Dispatch| EmailNotifier[("Email Notification Service")]
-    Client -->|7. Verify at Gate| ETicketService
+    Kafka -->|4. Consume Event Asynchronously| ETicketService
+    ETicketService -->|5. Store Document & QR Base64| RedisStore[("Redis Non-Relational Store\nE-Ticket Document")]
+    ETicketService -->|6. Dispatch HTML Gate Pass & Attachment| EmailService[("SMTP Email Service\nJavaMailSender")]
+    Client -->|7. Gate Check-in & Verification| ETicketService
 ```
 
 ---
 
-## 2. Pemenuhan Spesifikasi & Kriteria Teknis
+## 2. Core Architectural Highlights
 
-Sistem ini memenuhi seluruh kualifikasi teknis mulai dari tingkat **Junior, Middle, hingga Senior**:
-
-| Level | Persyaratan Teknis | Implementasi Nyata pada Proyek Ini |
-| :--- | :--- | :--- |
-| **Junior** | **Spring IoC & Architecture** | Inversi kontrol penuh via Constructor Injection (`@RequiredArgsConstructor`), pemisahan kontrak Interface & Implementasi (`OrderService` & `OrderServiceImpl`), isolasi konfigurasi, dan penanganan error terpusat (`@RestControllerAdvice`). |
-| | **Java Stream API** | Pipeline agregasi analitik finansial di `ReportServiceImpl`: pemfilteran data, transformasi DTO, grouping multi-dimensi (`Collectors.groupingBy`), dan reduksi total omset (`reduce`, `summingLong`). |
-| | **Native SQL Query** | Query native PostgreSQL untuk pencarian relasional kompleks dan join data berkinerja tinggi. |
-| **Middle** | **Intermediate Native SQL** | **Pessimistic Locking (`SELECT ... FOR UPDATE`)**: Mengunci baris kuota tiket secara eksklusif di level database engine saat checkout untuk menjamin **tidak terjadi *overselling*** pada skenario *ticket war*. |
-| | **Containerization & Microservices** | Multi-stage `Dockerfile` (Eclipse Temurin JRE 21 ringan) untuk kedua modul layanan + `docker-compose.yml` yang mengorkestrasi PostgreSQL, Redis, Kafka, dan 2 microservices dalam 1 kali perintah. |
-| **Senior** | **Advance Native SQL Query** | • **Window Function:** Menghitung akumulasi omset berjalan (*running total revenue*) per event dan perangkingan transaksi (`SUM(total_amount) OVER (PARTITION BY event_id ORDER BY created_at)`).<br>• **CTE (Common Table Expressions):** Rekapitulasi hierarkis keterisian kuota (*occupancy rate*) multi-tier secara modular dan cepat (`WITH tier_metrics AS ...`). |
-| | **Kafka & Stream Application** | Eksekusi pembayaran mempublikasikan `OrderPaidEvent` ke Kafka topic `ticket-orders.paid`. Modul `eticket-notification-service` mengonsumsinya secara asinkron tanpa memblokir thread pembayaran utama. |
-| | **Redis & Caching Strategy** | • **Idempotency Key Protection:** Mencegah *double payment* akibat klik berulang atau koneksi lambat (`X-Idempotency-Key` di Redis dengan TTL 10 menit).<br>• **High-speed Cache:** Caching katalog event dan kuota di Redis dengan strategi invalidasi otomatis saat transaksi commit. |
-| | **Non-Relational / Document DB** | Tiket elektronik disimpan dalam struktur dokumen cepat (Redis Key-Value & Data Grid) yang dioptimasi untuk pembacaan instan saat pemindaian QR di pintu masuk (*gate check-in*). |
+- **High-Concurrency Ticket War Protection:** Database-level pessimistic write locking (`SELECT ... FOR UPDATE`) guarantees zero overselling across concurrent checkout requests.
+- **Distributed Idempotency Protection:** Enforces unique transaction execution via Redis `SETNX` (10-minute TTL) on the `X-Idempotency-Key` header, preventing duplicate debiting from retried or double-clicked requests.
+- **Event-Driven Asynchronous Processing:** Payment processing finishes in sub-50ms by delegating I/O-intensive operations (PDF/HTML rendering, ZXing QR code generation, and SMTP transport) to `eticket-notification-service` via Apache Kafka (`ticket-orders.paid`).
+- **Cryptographic QR Pass & Gate Verification:** Each issued ticket embeds a SHA-256 cryptographic signature inside a high fault-tolerant QR code (ZXing Error Correction Level H, 30% damage tolerance). Entrance turnstile scanners can validate authenticity via single-use verification endpoints.
+- **Advanced Financial Analytics:** PostgreSQL Window Functions for partition-based running revenue calculation and order ranking, Common Table Expressions (CTE) for hierarchical tier occupancy metrics, and Java Stream API in-memory aggregation pipelines.
+- **Enterprise Audit Trail:** Automated auditing of all financial mutations and inventory changes into `audit_logs` tracking previous states, updated values, operator credentials, and client IP addresses.
 
 ---
 
-## 3. Struktur Direktori Proyek
+## 3. Project Structure
 
 ```text
 event-ticketing-platform/
 ├── pom.xml                                      # Parent POM (Java 21, Spring Boot 3.3.5)
-├── docker-compose.yml                           # 1-Click Run: Postgres, Redis, Kafka, 2 Services
-├── README.md                                    # Dokumentasi Utama
+├── docker-compose.yml                           # Full environment: PostgreSQL, Redis, Kafka, 2 Services
+├── database/                                    # Database initialization & migration scripts
+│   └── init.sql                                 # PostgreSQL DDL and sample seeds
+├── README.md                                    # System Documentation
 │
-├── ticket-order-service/                        # Service Utama (Port 8081)
+├── ticket-order-service/                        # Core Order & Payment Service (Port 8081)
 │   ├── Dockerfile
 │   └── src/main/java/com/fintech/ticket/
-│       ├── common/constant/                    # ApiUrlConstant, AppConstant, SecurityConstant, dll
-│       ├── common/response/                    # ApiResponse<T>
-│       ├── config/                              # SecurityConfig, SwaggerConfig, RedisConfig, KafkaProducerConfig
-│       ├── controller/                          # AuthController, EventController, OrderController, PaymentController, ReportController, AuditLogController
-│       ├── dto/request/ & dto/response/         # Request & Response DTOs
-│       ├── entity/                              # User, Role, Event, TicketTier, Order, Payment, AuditLog
-│       ├── event/                               # OrderPaidEvent (Kafka Payload)
-│       ├── exception/                           # GlobalExceptionHandler & Custom Exceptions
-│       ├── repository/                          # JPA Repositories + Native Query (Window Func, CTE, FOR UPDATE)
-│       ├── security/                            # JwtTokenProvider, JwtFilter, CustomUserDetailsService
-│       └── service/impl/                        # Business Logic, Java Stream Analytics, Redis Idempotency
+│       ├── common/                              # API URL definitions, constants, and unified response wrappers
+│       ├── config/                              # Security, Swagger, Redis, and Kafka Producer configurations
+│       ├── controller/                          # Auth, Event, Order, Payment, Report, and Audit controllers
+│       ├── dto/                                 # Request and Response transfer objects
+│       ├── entity/                              # JPA Domain models (User, Event, TicketTier, Order, Payment, AuditLog)
+│       ├── event/                               # Kafka event message models (OrderPaidEvent)
+│       ├── exception/                           # Global exception handling and custom business exceptions
+│       ├── repository/                          # Repositories with Window Functions, CTE, and Row Locks
+│       ├── security/                            # JWT token provider, authentication filter, UserDetailsService
+│       └── service/impl/                        # Business transactions, Redis caching, and Stream reporting
 │
-└── eticket-notification-service/                # Service Sekunder (Port 8082)
+└── eticket-notification-service/                # Fulfillment & Notification Worker (Port 8082)
     ├── Dockerfile
     └── src/main/java/com/fintech/eticket/
-        ├── common/                              # Constants & Response wrappers
-        ├── config/                              # KafkaConsumerConfig, SwaggerConfig, RedisConfig
+        ├── common/                              # Constants, API endpoints, and response models
+        ├── config/                              # Kafka Consumer, Redis, and Swagger configurations
         ├── consumer/                            # OrderPaidKafkaConsumer
-        ├── controller/                          # ETicketController
-        ├── entity/                              # ETicket (Document/Entity dengan QR Base64)
-        ├── repository/impl/                     # ETicketRepository (Redis Data Grid)
-        └── service/impl/                        # ETicketService, QRCodeService (ZXing), EmailService (HTML Gate Pass + QR Attachment)
+        ├── controller/                          # E-Ticket retrieval, HTML rendering, and Gate verification
+        ├── entity/                              # ETicket document model with QR Base64 payload
+        ├── repository/impl/                     # Redis Data Grid document repository
+        └── service/impl/                        # ETicketService, QRCodeService (ZXing), EmailService (HTML + QR)
 ```
 
 ---
 
-## 4. Cara Menjalankan Sistem
+## 4. Getting Started
 
-### Opsi A: Menjalankan Menggunakan Docker Compose (Direkomendasikan)
-Cukup jalankan satu perintah dari root folder repositori:
+### Option A: Running with Docker Compose (Recommended)
+
+Run the entire ecosystem with a single command from the root directory:
 
 ```bash
 docker compose up -d
 ```
 
-Seluruh kontainer (PostgreSQL, Redis, Kafka, `ticket-order-service`, dan `eticket-notification-service`) akan menyala otomatis dan siap digunakan dalam beberapa detik.
+This starts:
+- **PostgreSQL 16** (`localhost:5432`)
+- **Redis 7** (`localhost:6379`)
+- **Apache Kafka KRaft** (`localhost:9092`)
+- **ticket-order-service** (`localhost:8081`)
+- **eticket-notification-service** (`localhost:8082`)
 
-Untuk menghentikan kontainer:
+To stop all services:
 ```bash
 docker compose down
 ```
 
 ---
 
-### Opsi B: Menjalankan Secara Lokal (Maven)
-Pastikan Java 21 dan Maven 3.9+ sudah terpasang di komputer Anda.
+### Option B: Running Locally with Maven
 
-1. **Jalankan dependensi database & broker** (Postgres, Redis, Kafka).
-2. **Build seluruh project:**
+Prerequisites: **JDK 21** and **Maven 3.9+**.
+
+1. **Start dependencies** (PostgreSQL, Redis, Apache Kafka).
+2. **Build all modules:**
    ```bash
    mvn clean package -DskipTests
    ```
-3. **Jalankan Service 1 (Ticket Order Service):**
+3. **Start Service 1 (Ticket Order Service):**
    ```bash
    cd ticket-order-service
    mvn spring-boot:run
    ```
-4. **Jalankan Service 2 (ETicket Notification Service):**
+4. **Start Service 2 (ETicket Notification Service):**
    ```bash
    cd eticket-notification-service
    mvn spring-boot:run
@@ -134,24 +138,24 @@ Pastikan Java 21 dan Maven 3.9+ sudah terpasang di komputer Anda.
 
 ---
 
-## 5. Dokumentasi API Interaktif (Swagger UI)
+## 5. Interactive API Documentation (Swagger UI)
 
-Setelah layanan aktif, dokumentasi Swagger UI interaktif dapat diakses langsung melalui browser:
+Interactive OpenAPI / Swagger documentation is available once the services are running:
 
 * **Ticket Order Service:** [http://localhost:8081/swagger-ui.html](http://localhost:8081/swagger-ui.html)
 * **ETicket Notification Service:** [http://localhost:8082/swagger-ui.html](http://localhost:8082/swagger-ui.html)
 
 ---
 
-## 6. Panduan Uji Coba Cepat (End-to-End Walkthrough)
+## 6. End-to-End Walkthrough
 
-### Kredensial Pengguna Awal (Seeded Data):
+### Pre-seeded User Credentials
 * **Admin:** Username: `admin` | Password: `AdminPass123!`
 * **User:** Username: `fazri` | Password: `Password123!`
 
 ---
 
-### Langkah 1: Autentikasi (Dapatkan Token JWT)
+### Step 1: Authentication (Obtain JWT Bearer Token)
 ```bash
 curl -X POST http://localhost:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
@@ -160,11 +164,11 @@ curl -X POST http://localhost:8081/api/v1/auth/login \
     "password": "Password123!"
   }'
 ```
-*Salin nilai `data.accessToken` dari respons untuk digunakan pada header `Authorization: Bearer <token>` di langkah berikutnya.*
+*Copy the `accessToken` from the response for subsequent requests.*
 
 ---
 
-### Langkah 2: Lihat Katalog Event Konser & Sisa Kuota (Redis Cached)
+### Step 2: Browse Concert Catalog & Available Quota (Redis Cached)
 ```bash
 curl -X GET http://localhost:8081/api/v1/events \
   -H "Authorization: Bearer <TOKEN>"
@@ -172,7 +176,7 @@ curl -X GET http://localhost:8081/api/v1/events \
 
 ---
 
-### Langkah 3: Booking Tiket Konser (Create Order)
+### Step 3: Book Concert Tickets (Create Order)
 ```bash
 curl -X POST http://localhost:8081/api/v1/orders \
   -H "Authorization: Bearer <TOKEN>" \
@@ -186,8 +190,8 @@ curl -X POST http://localhost:8081/api/v1/orders \
 
 ---
 
-### Langkah 4: Bayar Tiket (Proteksi Idempotency Key & Pessimistic Lock)
-Sertakan header wajib `X-Idempotency-Key` berupa UUID:
+### Step 4: Execute Payment (Pessimistic Lock & Idempotency Protection)
+Include a unique UUID in the `X-Idempotency-Key` header:
 
 ```bash
 curl -X POST http://localhost:8081/api/v1/payments \
@@ -199,36 +203,38 @@ curl -X POST http://localhost:8081/api/v1/payments \
     "paymentMethod": "VIRTUAL_ACCOUNT"
   }'
 ```
-*Coba kirim request yang sama sekali lagi dengan `X-Idempotency-Key` yang sama: sistem akan mendeteksi transaksi ganda secara otomatis dan tidak akan memotong kuota tiket dua kali.*
+*If this request is retried with the same `X-Idempotency-Key`, the system detects the duplicate transaction and returns the previously processed result without deducting inventory twice.*
 
 ---
 
-### Langkah 5: Cek Penerbitan E-Ticket & Pengiriman Email di Service 2
-1. **Inquiry Data E-Ticket (JSON & QR Code Base64):**
+### Step 5: Verify E-Ticket Fulfillment & Email Dispatch (Service 2)
+
+1. **Inquire E-Ticket Data & QR Code Base64:**
 ```bash
 curl -X GET http://localhost:8082/api/v1/etickets/order/<ORDER_NUMBER>
 ```
 
-2. **Render Tampilan HTML E-Ticket & QR Code Gate Pass (Buka di Browser):**
+2. **Render Responsive HTML Gate Pass in Browser:**
 ```text
 http://localhost:8082/api/v1/etickets/render/<TICKET_CODE>
 ```
 
-3. **Verifikasi Check-in di Pintu Masuk Konser (Gate Scanner):**
+3. **Simulate Turnstile Gate Check-in:**
 ```bash
 curl -X POST http://localhost:8082/api/v1/etickets/verify/<TICKET_CODE>
 ```
-*Catatan: Saat OrderPaidEvent diterima dari Kafka, `eticket-notification-service` secara otomatis mengirimkan email konfirmasi berformat HTML responsif lengkap dengan QR code dan lampiran file PNG QR code.*
+*When `OrderPaidEvent` is published, the notification worker generates the QR pass, stores it in the Redis document store, and dispatches an HTML email with the QR code image attachment to the buyer.*
 
 ---
 
-### Langkah 6: Periksa Laporan Finansial (Advance Native SQL)
-* **Running Revenue & Ranking (Window Function):**
+### Step 6: Query Financial & Analytical Reports
+
+* **Running Revenue & Transaction Ranking (Window Functions):**
   ```bash
   curl -X GET http://localhost:8081/api/v1/reports/running-revenue \
     -H "Authorization: Bearer <TOKEN>"
   ```
-* **Occupancy Summary (CTE):**
+* **Tier Occupancy Summary (Common Table Expressions):**
   ```bash
   curl -X GET http://localhost:8081/api/v1/reports/occupancy-summary \
     -H "Authorization: Bearer <TOKEN>"
@@ -241,8 +247,9 @@ curl -X POST http://localhost:8082/api/v1/etickets/verify/<TICKET_CODE>
 
 ---
 
-## 7. Audit Trail & Kepatuhan Keamanan
-Semua mutasi finansial dan pemotongan kuota dicatat secara otomatis ke dalam tabel database `audit_logs` (mencakup aksi, entitas, ID, username, nilai lama, nilai baru, dan alamat IP). Log audit dapat diinspeksi melalui:
+## 7. Security & Audit Trail
+
+All critical financial mutations and ticket quota decrements are recorded in the `audit_logs` table (including action, target entity, record ID, username, previous value, new value, timestamp, and client IP address). The audit trail can be inspected via:
 
 ```bash
 curl -X GET http://localhost:8081/api/v1/audits \
@@ -252,4 +259,4 @@ curl -X GET http://localhost:8081/api/v1/audits \
 ---
 
 **Author:** Muhammad Fazri Deffara Riswandy  
-**Position:** Backend Developer (Spring Boot)
+**Role:** Backend Software Engineer
