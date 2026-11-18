@@ -18,7 +18,6 @@ public class ETicketRepositoryImpl implements ETicketRepository {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
-    // In-memory fallback / cache buffer
     private final Map<String, ETicket> localByOrder = new ConcurrentHashMap<>();
     private final Map<String, ETicket> localByCode = new ConcurrentHashMap<>();
 

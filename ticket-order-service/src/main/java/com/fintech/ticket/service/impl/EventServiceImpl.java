@@ -30,8 +30,6 @@ public class EventServiceImpl implements EventService {
     @Transactional(readOnly = true)
     public List<EventDetailResponse> getAllPublishedEvents() {
         List<Event> events = eventRepository.findByStatusOrderByEventDateAsc("PUBLISHED");
-
-        // JAVA STREAM API: Transform entity list to DTO list
         return events.stream()
                 .map(this::mapToEventDetailResponse)
                 .collect(Collectors.toList());
@@ -42,7 +40,6 @@ public class EventServiceImpl implements EventService {
     public EventDetailResponse getEventById(UUID eventId) {
         String cacheKey = CacheConstant.EVENT_CACHE_PREFIX + eventId;
 
-        // 1. Check Redis Cache first
         try {
             Object cachedData = redisTemplate.opsForValue().get(cacheKey);
             if (cachedData instanceof EventDetailResponse cachedResponse) {
@@ -55,13 +52,11 @@ public class EventServiceImpl implements EventService {
 
         log.info("Cache MISS for event details: {}. Querying database...", eventId);
 
-        // 2. Fetch from database if cache miss
         Event event = eventRepository.findByIdWithTiers(eventId)
                 .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + eventId));
 
         EventDetailResponse response = mapToEventDetailResponse(event);
 
-        // 3. Put into Redis cache with TTL
         try {
             redisTemplate.opsForValue().set(cacheKey, response, Duration.ofMinutes(CacheConstant.EVENT_CACHE_TTL_MINUTES));
         } catch (Exception e) {
@@ -83,7 +78,6 @@ public class EventServiceImpl implements EventService {
     }
 
     private EventDetailResponse mapToEventDetailResponse(Event event) {
-        // JAVA STREAM API: Map tier entities to response DTOs
         List<TicketTierResponse> tierResponses = event.getTiers().stream()
                 .map(tier -> TicketTierResponse.builder()
                         .id(tier.getId())

@@ -36,7 +36,6 @@ public class TicketOrderServiceApplication {
             PasswordEncoder passwordEncoder
     ) {
         return args -> {
-            // 1. Seed Users if not present
             if (userRepository.count() == 0) {
                 User admin = User.builder()
                         .username("admin")
@@ -58,7 +57,6 @@ public class TicketOrderServiceApplication {
                 log.info("Seeded default users: 'admin' and 'fazri'");
             }
 
-            // 2. Seed Events and Ticket Tiers if not present
             if (eventRepository.count() == 0) {
                 Event festival = Event.builder()
                         .name("Jakarta Summer Music Festival 2026")

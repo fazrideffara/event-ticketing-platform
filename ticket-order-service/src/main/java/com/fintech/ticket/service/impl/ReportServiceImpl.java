@@ -30,10 +30,8 @@ public class ReportServiceImpl implements ReportService {
     @Override
     @Transactional(readOnly = true)
     public List<RunningRevenueReportResponse> getRunningRevenueReport() {
-        // ADVANCE NATIVE SQL: Window Function query execution
         List<RunningRevenueProjection> projections = orderRepository.findRunningRevenueReport();
 
-        // JAVA STREAM API: Map native projections to DTO response
         return projections.stream()
                 .map(p -> RunningRevenueReportResponse.builder()
                         .orderId(p.getOrderId())
@@ -52,10 +50,8 @@ public class ReportServiceImpl implements ReportService {
     @Override
     @Transactional(readOnly = true)
     public List<OccupancyReportResponse> getOccupancySummaryReport() {
-        // ADVANCE NATIVE SQL: CTE (Common Table Expressions) query execution
         List<OccupancySummaryProjection> projections = orderRepository.findOccupancySummaryReport();
 
-        // JAVA STREAM API: Map native CTE projections to DTO response
         return projections.stream()
                 .map(p -> OccupancyReportResponse.builder()
                         .eventId(p.getEventId())
@@ -77,49 +73,38 @@ public class ReportServiceImpl implements ReportService {
     public SalesAnalyticsResponse getSalesAnalytics() {
         List<Order> allOrders = orderRepository.findAll();
 
-        // =========================================================================
-        // JAVA STREAM API ADVANCED ANALYTICS PIPELINES
-        // =========================================================================
-
-        // 1. Filter: Filter only completed/PAID orders
         List<Order> paidOrders = allOrders.stream()
                 .filter(o -> o.getStatus() == OrderStatus.PAID)
                 .toList();
 
         long totalCompletedOrders = paidOrders.size();
 
-        // 2. Reduce: Sum total tickets sold
         long totalTicketsSold = paidOrders.stream()
                 .mapToLong(Order::getQuantity)
                 .sum();
 
-        // 3. Reduce: Calculate total gross revenue
         BigDecimal totalGrossRevenue = paidOrders.stream()
                 .map(Order::getTotalAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 4. GroupingBy & SummingLong: Count tickets per tier
         Map<String, Long> ticketCountByTier = paidOrders.stream()
                 .collect(Collectors.groupingBy(
                         o -> o.getTier().getTierName(),
                         Collectors.summingLong(Order::getQuantity)
                 ));
 
-        // 5. GroupingBy & Reducing: Total revenue per tier
         Map<String, BigDecimal> revenueByTier = paidOrders.stream()
                 .collect(Collectors.groupingBy(
                         o -> o.getTier().getTierName(),
                         Collectors.reducing(BigDecimal.ZERO, Order::getTotalAmount, BigDecimal::add)
                 ));
 
-        // 6. GroupingBy & Counting: Order count by status across all orders
         Map<String, Long> orderCountByStatus = allOrders.stream()
                 .collect(Collectors.groupingBy(
                         o -> o.getStatus().name(),
                         Collectors.counting()
                 ));
 
-        // 7. Calculate average order value
         double averageOrderValue = totalCompletedOrders > 0
                 ? totalGrossRevenue.divide(BigDecimal.valueOf(totalCompletedOrders), 2, RoundingMode.HALF_UP).doubleValue()
                 : 0.0;

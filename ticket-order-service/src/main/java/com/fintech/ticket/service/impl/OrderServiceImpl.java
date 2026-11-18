@@ -108,7 +108,6 @@ public class OrderServiceImpl implements OrderService {
 
         List<Order> orders = orderRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
 
-        // JAVA STREAM API: Map orders to OrderResponse DTOs
         return orders.stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());

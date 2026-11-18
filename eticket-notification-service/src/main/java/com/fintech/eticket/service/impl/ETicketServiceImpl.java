@@ -38,11 +38,7 @@ public class ETicketServiceImpl implements ETicketService {
 
         String ticketCode = generateTicketCode();
         String qrHash = generateQrHash(ticketCode, event.getOrderNumber(), event.getBuyerEmail());
-
-        // Construct structured QR payload
         String qrPayload = buildQrPayload(ticketCode, event, qrHash);
-
-        // Generate QR code image in Base64 format
         String qrCodeBase64 = qrCodeService.generateQRCodeBase64(qrPayload, 300, 300);
 
         ETicket ticket = ETicket.builder()
@@ -62,8 +58,6 @@ public class ETicketServiceImpl implements ETicketService {
                 .build();
 
         ETicket savedTicket = ticketRepository.save(ticket);
-
-        // Dispatch email notification with embedded QR code and ticket details
         emailService.sendETicketEmail(savedTicket);
 
         log.info("E-Ticket successfully issued and stored: code={}, orderNumber={}, buyer={}",

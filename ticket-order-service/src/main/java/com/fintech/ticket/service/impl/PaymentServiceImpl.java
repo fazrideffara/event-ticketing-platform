@@ -54,7 +54,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         String redisKey = CacheConstant.IDEMPOTENCY_PREFIX + idempotencyKey;
 
-        // 1. REDIS IDEMPOTENCY KEY CHECK (SETNX with TTL)
         boolean isNewRequest = false;
         try {
             Boolean acquired = redisTemplate.opsForValue()
@@ -67,7 +66,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         if (!isNewRequest) {
             log.warn("Duplicate payment request detected for idempotency key: {}", idempotencyKey);
-            // Check if existing payment is already saved in DB
             Optional<Payment> existingPayment = paymentRepository.findByIdempotencyKey(idempotencyKey);
             if (existingPayment.isPresent()) {
                 log.info("Returning previously completed payment for idempotency key: {}", idempotencyKey);
@@ -77,26 +75,20 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         try {
-            // 2. Execute transactional payment with Pessimistic Lock
             Payment payment = executePaymentTransaction(request, idempotencyKey, username, ipAddress);
 
-            // 3. Mark Idempotency key as COMPLETED in Redis
             try {
                 redisTemplate.opsForValue().set(redisKey, AppConstant.STATUS_COMPLETED, Duration.ofMinutes(CacheConstant.IDEMPOTENCY_TTL_MINUTES));
             } catch (Exception e) {
                 log.warn("Failed to update idempotency status in Redis: {}", e.getMessage());
             }
 
-            // 4. Publish Event to Kafka asynchronously
             publishOrderPaidEvent(payment.getOrder(), payment);
-
-            // 5. Evict event cache so that clients see real-time remaining quota
             eventService.evictEventCache(payment.getOrder().getEvent().getId());
 
             return mapToResponse(payment, AppConstant.MSG_PAYMENT_SUCCESS);
 
         } catch (Exception ex) {
-            // If failed, clear idempotency key in Redis so the client can safely retry
             try {
                 redisTemplate.delete(redisKey);
             } catch (Exception e) {
@@ -130,10 +122,6 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BadRequestException("Order has expired. Please create a new booking.");
         }
 
-        // =========================================================================
-        // PESSIMISTIC LOCKING: Kunci baris tier di PostgreSQL (SELECT ... FOR UPDATE)
-        // Mencegah overselling saat terjadi high-concurrency ticket war
-        // =========================================================================
         TicketTier lockedTier = ticketTierRepository.findByIdForUpdate(order.getTier().getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket tier not found: " + order.getTier().getId()));
 
@@ -141,17 +129,14 @@ public class PaymentServiceImpl implements PaymentService {
             throw new InsufficientQuotaException("Quota exceeded during checkout. Remaining quota: " + lockedTier.getAvailableQuota());
         }
 
-        // Potong kuota tiket
         int oldQuota = lockedTier.getAvailableQuota();
         int newQuota = oldQuota - order.getQuantity();
         lockedTier.setAvailableQuota(newQuota);
         ticketTierRepository.save(lockedTier);
 
-        // Update status order menjadi PAID
         order.setStatus(OrderStatus.PAID);
         orderRepository.save(order);
 
-        // Buat record pembayaran
         Payment payment = Payment.builder()
                 .order(order)
                 .idempotencyKey(idempotencyKey)
@@ -163,7 +148,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         Payment savedPayment = paymentRepository.save(payment);
 
-        // Record Audit Trail
         auditService.recordAudit(
                 "PAYMENT_SUCCESS",
                 "Payment",

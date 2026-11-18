@@ -15,10 +15,6 @@ public interface TicketTierRepository extends JpaRepository<TicketTier, UUID> {
 
     List<TicketTier> findByEventId(UUID eventId);
 
-    /**
-     * INTERMEDIATE NATIVE SQL: Pessimistic Row-Level Write Lock (FOR UPDATE)
-     * Kritis untuk mencegah overselling saat terjadi high-concurrency ticket war.
-     */
     @Query(value = "SELECT * FROM ticket_tiers WHERE id = :tierId FOR UPDATE", nativeQuery = true)
     Optional<TicketTier> findByIdForUpdate(@Param("tierId") UUID tierId);
 }

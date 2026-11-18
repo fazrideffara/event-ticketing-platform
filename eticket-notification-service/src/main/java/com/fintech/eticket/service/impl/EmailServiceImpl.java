@@ -52,7 +52,6 @@ public class EmailServiceImpl implements EmailService {
             helper.setSubject("[E-TICKET CONFIRMATION] " + ticket.getEventName() + " - " + ticket.getTicketCode());
             helper.setText(htmlContent, true);
 
-            // Attach QR Code as standalone image file for convenience
             byte[] qrBytes = qrCodeService.generateQRCodeImage(ticket.getQrPayload(), 300, 300);
             helper.addAttachment("eticket-" + ticket.getTicketCode() + "-qr.png",
                     new ByteArrayResource(qrBytes));

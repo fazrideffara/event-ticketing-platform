@@ -22,10 +22,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     List<Order> findByStatus(OrderStatus status);
 
-    /**
-     * ADVANCE NATIVE SQL: Window Functions
-     * Menghitung running total akumulasi omset penjualan per event & ranking nominal transaksi.
-     */
     @Query(value = """
             SELECT 
                 o.id AS orderId,
@@ -51,10 +47,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             """, nativeQuery = true)
     List<RunningRevenueProjection> findRunningRevenueReport();
 
-    /**
-     * ADVANCE NATIVE SQL: Common Table Expressions (CTE)
-     * Rekapitulasi hierarki penjualan tiket per event dan persentase okupansi kuota.
-     */
     @Query(value = """
             WITH tier_metrics AS (
                 SELECT 
